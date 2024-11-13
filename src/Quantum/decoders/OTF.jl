@@ -10,6 +10,7 @@ function ordered_Tanner_forest(H::T, v::T, chn::AbstractClassicalNoiseChannel, B
 
     # TODO add MS_C
     # TODO decimation
+    # TODO introduce possibility _surface_code (that is, for weight, 1 columns, introduce another row)
     BP_alg ∈ (:SP, :MS) || throw(ArgumentError("`BP_alg` should be `:SP` or `:MS`"))
     Int(order(base_ring(H))) == 2 || throw(ArgumentError("Currently only implemented for binary codes"))
     nr, nc = size(H)
@@ -50,10 +51,19 @@ function ordered_Tanner_forest(H::T, v::T, chn::AbstractClassicalNoiseChannel, B
 
     if !flag
         # initial BP did not converge
+        # TODO, see if sort in terms of absolute values
         ordered_indices = sortperm(posteriors, rev = true)
         erased_columns = _select_erased_columns(H, posteriors, ordered_indices)
+        # TODO, erased columns is a boolean vector, should we not iterate only over the true values?
         for i in erased_columns
+            #TODO this should change, if llr > 0, posteriors[i] = 1e-10, else: posteriors[i] = 1-1e-10
+            # TODO, open question, to which probabilitiy do we consider errors to be 1.
             posteriors[i] = 1e-10
+            # if posteriors[i] <= .99
+            #     posteriors[i] = 1e-10
+            # else
+            #     posteriors[i] = 1-1e-10
+            # end
         end
 
         if BP_alg == :SP
@@ -89,16 +99,17 @@ end
 function _select_erased_columns(H::Matrix{Int}, ordered_indices::Vector{Int}, var_adj_list::Vector{Vector{Int}})
 
     # this is using the disjoint-set data structure/union find algorithm for merging them
-    nr = size(H, 1)
-    parents = collect(1:nr)
-    depths = ones(Int, nr)
-    output_indices = falses(size(H, 2))
-    seen_roots_list = [[-1 for _ in 1:length(var_adj_list[c])] for c in 1:length(var_adj_list)]
+    nr = size(H, 1) # Rows
+    parents = collect(1:nr) # Roots
+    depths = ones(Int, nr) # Depths
+    output_indices = falses(size(H, 2)) # Result
+    #TODO is this following line costful? Double loop? Can we allocate the memory in preprocessing?
+    seen_roots_list = [[-1 for _ in 1:length(var_adj_list[c])] for c in 1:length(var_adj_list)] # Allocating space
     for col in ordered_indices
         # println("col $col")
         count = 0
-        for row in var_adj_list[col]
-            row_root = _find_root(parents, row)
+        for row in var_adj_list[col] # Checks adjacent to the column
+            row_root = _find_root(parents, row) # Compressed find algorithm
             flag = _check_roots_list!(seen_roots_list, col, row_root)
             # println(seen_roots_list[col])
             if flag
@@ -106,7 +117,8 @@ function _select_erased_columns(H::Matrix{Int}, ordered_indices::Vector{Int}, va
                 # println("loop at row $row with root $row_root")
                 output_indices[col] = true
                 break
-            elseif count ≥ 1
+            # TODO Check the case in which you have columns with a single 1 element
+            elseif count ≥ 1 
                 # println("here on $count")
                 _union_by_rank!(parents, depths, seen_roots_list[col][count], seen_roots_list[col][count + 1])
                 # println(parents)
@@ -116,11 +128,13 @@ function _select_erased_columns(H::Matrix{Int}, ordered_indices::Vector{Int}, va
         # println("parents: $parents")
         # println(depths)
     end
+    # TODO output_indices is a boolean vector of length n
     return output_indices
 end
 
 # find w/ path compression
 function _find_root(parents::Vector{Int}, i::Int)
+    # Recursive call keeps depth low.
     if parents[i] ≠ i
         parents[i] = _find_root(parents, parents[i])
     end
@@ -131,11 +145,12 @@ function _check_roots_list!(seen_roots_list::Vector{Vector{Int}}, c::Int, new_ro
     i = 1
     len = length(seen_roots_list[c])
     while i ≤ len && seen_roots_list[c][i] ≠ -1
-        seen_roots_list[c][i] == new_root && return true
+        seen_roots_list[c][i] == new_root && return true # There is a loop, column is erased, we return true
         i += 1
     end
     # hasn't found it and not yet at the end of the list
     i ≤ len && (seen_roots_list[c][i] = new_root; return false)
+    # TODO, this last line should never occur, should it not?
     return false
 end
 
@@ -143,6 +158,8 @@ end
 function _union_by_rank!(parents::Vector{Int}, depths::Vector{Int}, i::Int, j::Int)
     # println("union on $i and $j")
     # println("parents before $parents")
+    # TODO, parents should not be changed until we ensure that the column produces no loops.
+    # TODO, I would make that this function returns merged_root, and merged_depth
     if depths[i] > depths[j]
         # println("case 1")
         parents[j] = i
@@ -154,6 +171,17 @@ function _union_by_rank!(parents::Vector{Int}, depths::Vector{Int}, i::Int, j::I
         depths[i] += 1
         # println("case 3")
     end
+    # if depths[i] > depths[j]
+    #     merged_root = i
+    #     merged_depth = depths[i]
+    # elseif depths[j] > dephts[i]
+    #     merged_root = j
+    #     merged_depth = depths[j]
+    # else # when depths[i] == depths[j]
+    #     merged_root = i
+    #     merged_depth = depths[i] + 1
+    # end
+    # return merged_root, merged_depth
 end
 
 # # Example usage:
